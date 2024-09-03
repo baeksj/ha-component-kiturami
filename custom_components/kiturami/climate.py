@@ -35,23 +35,33 @@ async def async_setup_entry(
     api: KrbAPI = entry.runtime_data
     scan_interval = entry.data[CONF_SCAN_INTERVAL]
 
-    devices = await api.client.async_get_device_list()
+    devices = await api.client.async_get_normal_device_list()
 
-    async_add_entities([KituramiClimate(api, device["parentId"], device["nodeId"], device["deviceAlias"], scan_interval)
-                        for device in devices], True)
+    if devices:
+        """단일 보일러"""
+        async_add_entities([KituramiClimate(api, device["parentId"], device["nodeId"], "01", device["deviceAlias"], True, scan_interval)
+                            for device in devices], True)
+    else:
+        """각방제어 보일러"""
+        devices = await api.client.async_get_device_list()
 
+        if devices and 'nodeId' in devices[0]:
+            slaves = await api.client.async_get_device_info(devices[0]["nodeId"])
+            async_add_entities([KituramiClimate(api, devices[0]["parentId"], slave["nodeId"], slave["slaveId"], slave["alias"], False, scan_interval)
+                                for slave in slaves], True)
 
 class KituramiClimate(ClimateEntity):
     """ 귀뚜라미 Climate 클래스"""
     _enable_turn_on_off_backwards_compatibility = False
 
-    def __init__(self, api: KrbAPI, parent_id: str, node_id: str, name: str, _min_time_between_updates: int):
+    def __init__(self, api: KrbAPI, parent_id: str, node_id: str, slave_id: str, name: str, is_single_type: bool, _min_time_between_updates: int):
         self._api: KrbAPI = api
         self._min_time_between_updates: datetime.timedelta = timedelta(minutes=_min_time_between_updates)
         self._parent_id = parent_id
         self._node_id = node_id
-        self.entity_id = f"climate.{DOMAIN}_{node_id.replace(':', '_')}"
-        self._attr_unique_id = f"{DOMAIN}-{node_id}"
+        self._slave_id = slave_id
+        self.entity_id = f"climate.{DOMAIN}_{node_id.replace(':', '_')}{'' if is_single_type else '_' + name}"
+        self._attr_unique_id = f"{DOMAIN}-{node_id}{'' if is_single_type else '-' + slave_id}"
         self._attr_name = f'{TITLE} {name}'
         self._attr_device_info = DeviceInfo(
             configuration_url='https://krb.co.kr',
@@ -80,6 +90,7 @@ class KituramiClimate(ClimateEntity):
         return {
             'parent_id': self._parent_id,
             'node_id': self._node_id,
+            'slave_id': self._slave_id,
             "user_name": self._api.client.username,
             'device_mode': self._result['deviceMode'],
             'last_updated': self._last_updated,
@@ -125,11 +136,11 @@ class KituramiClimate(ClimateEntity):
     async def async_set_temperature(self, **kwargs):
         """새 목표 온도를 설정합니다."""
         if self.is_on is False:
-            await self._api.async_turn_on(self._node_id)
+            await self._api.async_turn_on(self._node_id, self._slave_id)
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
         self._req_mode = '0102'
-        await self._api.async_mode_heat(self._parent_id, self._node_id, '{:X}'.format(int(temperature)))
+        await self._api.async_mode_heat(self._parent_id, self._node_id, self._slave_id, '{:X}'.format(int(temperature)))
 
     @property
     def preset_mode(self):
@@ -152,23 +163,23 @@ class KituramiClimate(ClimateEntity):
         """새로운 목표 프리셋 모드를 설정합니다."""
         if self.is_on is False:
             self._req_mode = '0102'
-            await self._api.async_turn_on(self._node_id)
+            await self._api.async_turn_on(self._node_id, self._slave_id)
             await asyncio.sleep(1)
         if preset_mode == PresetMode.HEAT:
             self._req_mode = '0102'
-            await self._api.async_mode_heat(self._parent_id, self._node_id)
+            await self._api.async_mode_heat(self._parent_id, self._node_id, self._slave_id)
         elif preset_mode == PresetMode.BATH:
             self._req_mode = '0105'
             await self._api.async_mode_bath(self._parent_id, self._node_id)
         elif preset_mode == PresetMode.RESERVATION:
             self._req_mode = '0107'
-            await self._api.async_mode_reservation(self._parent_id, self._node_id)
+            await self._api.async_mode_reservation(self._parent_id, self._node_id, self._slave_id)
         elif preset_mode == PresetMode.RESERVATION_REPEAT:
             self._req_mode = '0108'
-            await self._api.async_mode_reservation_repeat(self._parent_id, self._node_id)
+            await self._api.async_mode_reservation_repeat(self._parent_id, self._node_id, self._slave_id)
         elif preset_mode == PresetMode.AWAY:
             self._req_mode = '0106'
-            await self._api.async_mode_away(self._node_id)
+            await self._api.async_mode_away(self._node_id, self._slave_id)
         else:
             _LOGGER.error(f"알 수 없는 작업 모드: {preset_mode}")
 
@@ -176,10 +187,10 @@ class KituramiClimate(ClimateEntity):
         """새로운 hvac 모드를 설정합니다."""
         if hvac_mode == HVACMode.HEAT:
             self._req_mode = '0102'
-            await self._api.async_turn_on(self._node_id)
+            await self._api.async_turn_on(self._node_id, self._slave_id)
         elif hvac_mode == HVACMode.OFF:
             self._req_mode = '0101'
-            await self._api.async_turn_off(self._node_id)
+            await self._api.async_turn_off(self._node_id, self._slave_id)
         await asyncio.sleep(1)
 
     async def async_update(self):
@@ -192,7 +203,7 @@ class KituramiClimate(ClimateEntity):
             return
         self._alive = await self._api.async_get_alive(self._parent_id, self._node_id)
         for try_cnt in range(3):
-            self._result = await self._api.async_device_mode_info(self._parent_id, self._node_id)
+            self._result = await self._api.async_device_mode_info(self._parent_id, self._node_id, self._slave_id)
             if not self._req_mode or self._result['deviceMode'] == self._req_mode:
                 self._last_updated = now
                 break
