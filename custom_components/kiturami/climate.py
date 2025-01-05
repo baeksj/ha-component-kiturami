@@ -56,7 +56,7 @@ class KituramiClimate(ClimateEntity):
 
     def __init__(self, api: KrbAPI, parent_id: str, node_id: str, slave_id: str, name: str, is_single_type: bool, _min_time_between_updates: int):
         self._api: KrbAPI = api
-        self._min_time_between_updates: datetime.timedelta = timedelta(minutes=_min_time_between_updates)
+        self._min_time_between_updates: datetime.timedelta = timedelta(seconds=_min_time_between_updates)
         self._parent_id = parent_id
         self._node_id = node_id
         self._slave_id = slave_id

@@ -13,7 +13,7 @@
         "data": {
           "username": "아이디",
           "password": "비밀번호",
-          "scan_interval": "동기화 간격 (분)"
+          "scan_interval": "동기화 간격 (초)"
         }
       }
     }

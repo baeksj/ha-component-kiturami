@@ -16,8 +16,8 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_PASSWORD): str,
         vol.Required(
             CONF_SCAN_INTERVAL,
-            default=15,
-        ): vol.All(vol.Coerce(int), vol.Range(min=5)),
+            default=30,
+        ): vol.All(vol.Coerce(int), vol.Range(min=30)),
     }
 )
 
